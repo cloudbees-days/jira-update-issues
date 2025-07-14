@@ -1,0 +1,245 @@
+apiVersion: automation.cloudbees.io/v1alpha1
+kind: action
+name: jira-update-issues
+description: "Update Jira issues using JQL query and field updates"
+inputs:
+  jira-url:
+    description: "Jira instance URL (e.g., https://your-domain.atlassian.net)"
+    required: true
+  jira-username:
+    description: "Jira username or email address"
+    required: true
+  jira-token:
+    description: "Jira API token"
+    required: true
+  jql:
+    description: "JQL query to find issues to update"
+    required: true
+  update-fields:
+    description: "YAML object containing field updates (will be converted to JSON for API)"
+    required: true
+  notify-users:
+    description: "Whether to send notifications to users about the update"
+    default: "true"
+    required: false
+  max-results:
+    description: "Maximum number of issues to update"
+    default: "50"
+    required: false
+  dry-run:
+    description: "If true, shows what would be updated without making changes"
+    default: "false"
+    required: false
+
+outputs:
+  updated-issues:
+    value: ${{ steps.update-issues.outputs.updated-issues }}
+    description: "JSON array of issues that were updated"
+  update-count:
+    value: ${{ steps.update-issues.outputs.update-count }}
+    description: "Number of issues successfully updated"
+  failed-updates:
+    value: ${{ steps.update-issues.outputs.failed-updates }}
+    description: "JSON array of issues that failed to update"
+
+runs:
+  using: composite
+  steps:
+    - id: update-issues
+      name: Update Jira Issues
+      uses: docker://alpine:3.22
+      shell: sh
+      run: |
+        set -e
+
+        # Install required tools
+        apk add --no-cache curl jq yq
+
+        # Validate inputs
+        if [ -z "${{ inputs.jira-url }}" ]; then
+          echo "Error: jira-url is required"
+          exit 1
+        fi
+
+        if [ -z "${{ inputs.jira-username }}" ]; then
+          echo "Error: jira-username is required"
+          exit 1
+        fi
+
+        if [ -z "${{ inputs.jira-token }}" ]; then
+          echo "Error: jira-token is required"
+          exit 1
+        fi
+
+        if [ -z "${{ inputs.jql }}" ]; then
+          echo "Error: jql is required"
+          exit 1
+        fi
+
+        if [ -z "${{ inputs.update-fields }}" ]; then
+          echo "Error: update-fields is required"
+          exit 1
+        fi
+
+        # Clean up URL (remove trailing slash if present)
+        JIRA_URL="${{ inputs.jira-url }}"
+        JIRA_URL="${JIRA_URL%/}"
+
+        # Convert YAML update-fields to JSON
+        echo "Converting YAML update-fields to JSON..."
+        echo '${{ inputs.update-fields }}' | yq -o=json > /tmp/update_fields.json
+
+        # Validate the converted JSON
+        if ! jq . /tmp/update_fields.json > /dev/null 2>&1; then
+          echo "Error: Invalid YAML in update-fields"
+          cat /tmp/update_fields.json
+          exit 1
+        fi
+
+        UPDATE_FIELDS_JSON=$(cat /tmp/update_fields.json)
+        echo "Update fields JSON: $UPDATE_FIELDS_JSON"
+
+        # First, get the issues to update using the JQL
+        echo "Finding issues to update with JQL: ${{ inputs.jql }}"
+
+        SEARCH_URL="${JIRA_URL}/rest/api/3/search"
+        QUERY_PARAMS="jql=$(echo '${{ inputs.jql }}' | sed 's/ /%20/g')&maxResults=${{ inputs.max-results }}&fields=id,key,summary"
+
+        SEARCH_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+          -X GET \
+          -H "Accept: application/json" \
+          -u "${{ inputs.jira-username }}:${{ inputs.jira-token }}" \
+          "${SEARCH_URL}?${QUERY_PARAMS}")
+
+        # Extract HTTP status code
+        SEARCH_HTTP_STATUS=$(echo "$SEARCH_RESPONSE" | tail -n1 | sed 's/.*HTTP_STATUS://')
+        SEARCH_RESPONSE_BODY=$(echo "$SEARCH_RESPONSE" | sed '$d')
+
+        # Check for successful response
+        if [ "$SEARCH_HTTP_STATUS" -ne 200 ]; then
+          echo "Error: Search request failed with status $SEARCH_HTTP_STATUS"
+          echo "Response: $SEARCH_RESPONSE_BODY"
+          exit 1
+        fi
+
+        # Extract issues to update
+        ISSUES_TO_UPDATE=$(echo "$SEARCH_RESPONSE_BODY" | jq -c '.issues')
+        ISSUE_COUNT=$(echo "$ISSUES_TO_UPDATE" | jq 'length')
+
+        echo "Found $ISSUE_COUNT issues to update"
+
+        if [ "$ISSUE_COUNT" -eq 0 ]; then
+          echo "No issues found matching the JQL query"
+          echo "[]" > "$CLOUDBEES_OUTPUTS/updated-issues"
+          echo "0" > "$CLOUDBEES_OUTPUTS/update-count"
+          echo "[]" > "$CLOUDBEES_OUTPUTS/failed-updates"
+          exit 0
+        fi
+
+        # Show what would be updated if dry-run
+        if [ "${{ inputs.dry-run }}" = "true" ]; then
+          echo "DRY RUN: Would update the following issues:"
+          echo "$ISSUES_TO_UPDATE" | jq -r '.[] | "  - \(.key): \(.fields.summary)"'
+          echo "DRY RUN: With update fields: $UPDATE_FIELDS_JSON"
+          echo "$ISSUES_TO_UPDATE" > "$CLOUDBEES_OUTPUTS/updated-issues"
+          echo "$ISSUE_COUNT" > "$CLOUDBEES_OUTPUTS/update-count"
+          echo "[]" > "$CLOUDBEES_OUTPUTS/failed-updates"
+          exit 0
+        fi
+
+        # Prepare for bulk update
+        UPDATED_ISSUES="[]"
+        FAILED_UPDATES="[]"
+        SUCCESS_COUNT=0
+
+        # Build update payload
+        UPDATE_PAYLOAD=$(jq -n --argjson fields "$UPDATE_FIELDS_JSON" \
+          --argjson notifyUsers "${{ inputs.notify-users }}" \
+          '{
+            fields: $fields,
+            notifyUsers: $notifyUsers
+          }')
+
+        # Create temporary files for tracking results
+        TEMP_DIR="/tmp/jira_update_$$"
+        mkdir -p "$TEMP_DIR"
+        echo "[]" > "$TEMP_DIR/updated_issues.json"
+        echo "[]" > "$TEMP_DIR/failed_updates.json"
+        echo "0" > "$TEMP_DIR/success_count.txt"
+
+        # Update each issue
+        echo "$ISSUES_TO_UPDATE" | jq -c '.[]' | while read -r issue; do
+          ISSUE_KEY=$(echo "$issue" | jq -r '.key')
+          ISSUE_ID=$(echo "$issue" | jq -r '.id')
+          ISSUE_SUMMARY=$(echo "$issue" | jq -r '.fields.summary')
+          
+          echo "Updating issue: $ISSUE_KEY - $ISSUE_SUMMARY"
+          
+          UPDATE_URL="${JIRA_URL}/rest/api/3/issue/${ISSUE_KEY}"
+          
+          UPDATE_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X PUT \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -u "${{ inputs.jira-username }}:${{ inputs.jira-token }}" \
+            -d "$UPDATE_PAYLOAD" \
+            "$UPDATE_URL")
+          
+          UPDATE_HTTP_STATUS=$(echo "$UPDATE_RESPONSE" | tail -n1 | sed 's/.*HTTP_STATUS://')
+          UPDATE_RESPONSE_BODY=$(echo "$UPDATE_RESPONSE" | sed '$d')
+          
+          if [ "$UPDATE_HTTP_STATUS" -eq 204 ] || [ "$UPDATE_HTTP_STATUS" -eq 200 ]; then
+            echo "  ✓ Successfully updated $ISSUE_KEY"
+            
+            # Add to successful updates
+            CURRENT_UPDATED=$(cat "$TEMP_DIR/updated_issues.json")
+            echo "$CURRENT_UPDATED" | jq --argjson issue "$issue" '. + [$issue]' > "$TEMP_DIR/updated_issues.json"
+            
+            # Increment success count
+            CURRENT_COUNT=$(cat "$TEMP_DIR/success_count.txt")
+            echo $((CURRENT_COUNT + 1)) > "$TEMP_DIR/success_count.txt"
+          else
+            echo "  ✗ Failed to update $ISSUE_KEY (HTTP $UPDATE_HTTP_STATUS)"
+            echo "    Response: $UPDATE_RESPONSE_BODY"
+            
+            FAILED_UPDATE=$(jq -n \
+              --argjson issue "$issue" \
+              --arg status "$UPDATE_HTTP_STATUS" \
+              --arg error "$UPDATE_RESPONSE_BODY" \
+              '{
+                issue: $issue,
+                httpStatus: $status,
+                error: $error
+              }')
+            
+            # Add to failed updates
+            CURRENT_FAILED=$(cat "$TEMP_DIR/failed_updates.json")
+            echo "$CURRENT_FAILED" | jq --argjson failed "$FAILED_UPDATE" '. + [$failed]' > "$TEMP_DIR/failed_updates.json"
+          fi
+        done
+
+        # Read final results from temporary files
+        UPDATED_ISSUES=$(cat "$TEMP_DIR/updated_issues.json")
+        FAILED_UPDATES=$(cat "$TEMP_DIR/failed_updates.json")
+        SUCCESS_COUNT=$(cat "$TEMP_DIR/success_count.txt")
+
+        # Cleanup temporary files
+        rm -rf "$TEMP_DIR"
+
+        # Set outputs
+        echo "$UPDATED_ISSUES" > "$CLOUDBEES_OUTPUTS/updated-issues"
+        echo "$SUCCESS_COUNT" > "$CLOUDBEES_OUTPUTS/update-count"
+        echo "$FAILED_UPDATES" > "$CLOUDBEES_OUTPUTS/failed-updates"
+
+        # Summary
+        FAILED_COUNT=$(echo "$FAILED_UPDATES" | jq 'length')
+        echo ""
+        echo "Update Summary:"
+        echo "  Successfully updated: $SUCCESS_COUNT issues"
+        echo "  Failed updates: $FAILED_COUNT issues"
+
+        if [ "$FAILED_COUNT" -gt 0 ]; then
+          echo "  Failed issue keys:"
+          echo "$FAILED_UPDATES" | jq -r '.[].issue.key' | sed 's/^/    - /'
+          exit 1
+        fi
