@@ -99,6 +99,41 @@ runs:
         UPDATE_FIELDS_JSON=$(cat /tmp/update_fields.json)
         echo "Update fields JSON: $UPDATE_FIELDS_JSON"
 
+        # Convert description to ADF format if it's a plain string
+        if echo "$UPDATE_FIELDS_JSON" | jq -e '.description' > /dev/null 2>&1; then
+          DESCRIPTION_TYPE=$(echo "$UPDATE_FIELDS_JSON" | jq -r 'type_of(.description)')
+          if [ "$DESCRIPTION_TYPE" = "string" ]; then
+            echo "Converting plain text description to Atlassian Document Format..."
+            PLAIN_DESCRIPTION=$(echo "$UPDATE_FIELDS_JSON" | jq -r '.description')
+            
+            # Convert newlines to proper ADF paragraph breaks
+            ADF_CONTENT=$(echo "$PLAIN_DESCRIPTION" | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n\\n/\\n/g' | sed 's/\\n$//')
+            
+            # Create ADF format
+            ADF_DESCRIPTION=$(jq -n \
+              --arg content "$ADF_CONTENT" \
+              '{
+                version: 1,
+                type: "doc",
+                content: [
+                  {
+                    type: "paragraph",
+                    content: [
+                      {
+                        type: "text",
+                        text: $content
+                      }
+                    ]
+                  }
+                ]
+              }')
+            
+            # Update the fields JSON with ADF description
+            UPDATE_FIELDS_JSON=$(echo "$UPDATE_FIELDS_JSON" | jq --argjson adf "$ADF_DESCRIPTION" '.description = $adf')
+            echo "Converted description to ADF format"
+          fi
+        fi
+
         # First, get the issues to update using the JQL
         echo "Finding issues to update with JQL: ${{ inputs.jql }}"
 
