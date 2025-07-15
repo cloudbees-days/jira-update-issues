@@ -203,7 +203,9 @@ runs:
         echo "0" > "$TEMP_DIR/success_count.txt"
 
         # Update each issue
-        echo "$ISSUES_TO_UPDATE" | jq -c '.[]' | while read -r issue; do
+        ISSUE_INDEX=0
+        while [ $ISSUE_INDEX -lt $ISSUE_COUNT ]; do
+          issue=$(echo "$ISSUES_TO_UPDATE" | jq -c ".[$ISSUE_INDEX]")
           ISSUE_KEY=$(echo "$issue" | jq -r '.key')
           ISSUE_ID=$(echo "$issue" | jq -r '.id')
           ISSUE_SUMMARY=$(echo "$issue" | jq -r '.fields.summary')
@@ -251,6 +253,9 @@ runs:
             CURRENT_FAILED=$(cat "$TEMP_DIR/failed_updates.json")
             echo "$CURRENT_FAILED" | jq --argjson failed "$FAILED_UPDATE" '. + [$failed]' > "$TEMP_DIR/failed_updates.json"
           fi
+          
+          # Increment index for next iteration
+          ISSUE_INDEX=$((ISSUE_INDEX + 1))
         done
 
         # Read final results from temporary files
