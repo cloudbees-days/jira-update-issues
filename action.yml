@@ -52,6 +52,8 @@ runs:
       run: |
         set -e
 
+        echo "THIS IS A TEST"
+
         # Install required tools
         apk add --no-cache curl jq yq
 
