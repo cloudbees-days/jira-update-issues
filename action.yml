@@ -111,13 +111,13 @@ runs:
           fi
         fi
 
-        # First, get the issues to update using the JQL
+                # First, get the issues to update using the JQL
         echo "Finding issues to update with JQL: ${{ inputs.jql }}"
 
         SEARCH_URL="${JIRA_URL}/rest/api/3/search"
         QUERY_PARAMS="jql=$(echo '${{ inputs.jql }}' | sed 's/ /%20/g')&maxResults=${{ inputs.max-results }}&fields=id,key,summary"
 
-        SEARCH_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+                SEARCH_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
           -X GET \
           -H "Accept: application/json" \
           -u "${{ inputs.jira-username }}:${{ inputs.jira-token }}" \
