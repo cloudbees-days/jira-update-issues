@@ -106,21 +106,7 @@ runs:
             echo "Converting plain text description to Atlassian Document Format..."
             
             # Create ADF format directly from the JSON field
-            UPDATE_FIELDS_JSON=$(echo "$UPDATE_FIELDS_JSON" | jq '.description |= {
-              "version": 1,
-              "type": "doc", 
-              "content": [
-                {
-                  "type": "paragraph",
-                  "content": [
-                    {
-                      "type": "text",
-                      "text": .
-                    }
-                  ]
-                }
-              ]
-            }')
+            UPDATE_FIELDS_JSON=$(echo "$UPDATE_FIELDS_JSON" | jq '.description |= {"version": 1, "type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": .}]}]}')
             echo "Converted description to ADF format"
           fi
         fi
