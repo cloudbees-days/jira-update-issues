@@ -61,7 +61,7 @@ runs:
           --token "${{ inputs.jira-token }}" \
           ${{ inputs.issue-key && format('--issue "{0}"', inputs.issue-key) || '' }} \
           ${{ inputs.jql && format('--jql "{0}"', inputs.jql) || '' }} \
-          ${{ inputs.update-fields && format('--update-fields '\''{0}'\''', inputs.update-fields) || '' }} \
+          ${{ inputs.update-fields && format('--update-fields "{0}"', inputs.update-fields) || '' }} \
           ${{ inputs.transition-id && format('--transition-id "{0}"', inputs.transition-id) || '' }} \
           ${{ inputs.transition-name && format('--transition-name "{0}"', inputs.transition-name) || '' }} \
           --max-results "${{ inputs.max-results }}" \
