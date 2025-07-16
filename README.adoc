@@ -1,6 +1,6 @@
 = CloudBees action: Update Jira Issues
 
-Use this action to update multiple Jira issues matching a JQL query. The action accepts field updates in YAML format (converted to JSON for the API) and provides detailed feedback on successful and failed updates.
+Use this action to update Jira issue(s) by specifying either a single issue key or a JQL query to find multiple issues. The action accepts field updates in YAML format and supports status transitions.
 
 == Inputs
 
@@ -28,32 +28,45 @@ Use this action to update multiple Jira issues matching a JQL query. The action 
 | Yes
 | Jira API token. Generate this in your Jira account settings under Security > API tokens
 
+| `issue-key`
+| String
+| No*
+| Single issue key to update (e.g., `PROJ-123`). Mutually exclusive with `jql`.
+
 | `jql`
 | String
-| Yes
-| JQL query to find issues to update. Examples: `"project = TEST AND status = 'In Progress'"`, `"assignee = currentUser() AND priority = High"`
+| No*
+| JQL query to find issues to update. Mutually exclusive with `issue-key`.
 
 | `update-fields`
 | YAML Object
-| Yes
+| No
 | YAML object containing field updates. Will be converted to JSON for the Jira API. See examples below for format.
 
-| `notify-users`
-| Boolean
+| `transition-id`
+| String
 | No
-| Whether to send notifications to users about the update. Default is `true`
+| Transition ID to apply to the issue(s)
+
+| `transition-name`
+| String
+| No
+| Transition name to apply (alternative to transition-id)
 
 | `max-results`
 | Number
 | No
-| Maximum number of issues to update. Default is `50`. Use this to limit bulk operations.
+| Maximum number of issues to update when using JQL. Default is `50`. Use this to limit bulk operations.
 
-| `dry-run`
+| `continue-on-error`
 | Boolean
 | No
-| If `true`, shows what would be updated without making changes. Default is `false`
+| Whether to continue updating other issues if one fails. Default is `true`
 
 |===
+
+*Either `issue-key` OR `jql` must be provided, but not both.
+*At least one of `update-fields`, `transition-id`, or `transition-name` must be provided.
 
 == Outputs
 
