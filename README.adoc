@@ -1,6 +1,6 @@
 = CloudBees action: Update Jira Issues
 
-Use this action to update Jira issue(s) by specifying either a single issue key or a JQL query to find multiple issues. The action accepts field updates in YAML format and supports status transitions.
+Use this action to update Jira issue(s) by specifying either a single issue key or a JQL query to find multiple issues. Supports field updates and status transitions.
 
 == Inputs
 
@@ -41,7 +41,7 @@ Use this action to update Jira issue(s) by specifying either a single issue key 
 | `update-fields`
 | YAML Object
 | No
-| YAML object containing field updates. Will be converted to JSON for the Jira API. See examples below for format.
+| YAML object containing field updates. Will be converted to JSON for the Jira API.
 
 | `transition-id`
 | String
@@ -56,7 +56,7 @@ Use this action to update Jira issue(s) by specifying either a single issue key 
 | `max-results`
 | Number
 | No
-| Maximum number of issues to update when using JQL. Default is `50`. Use this to limit bulk operations.
+| Maximum number of issues to update when using JQL. Default is `50`.
 
 | `continue-on-error`
 | Boolean
@@ -94,279 +94,77 @@ Use this action to update Jira issue(s) by specifying either a single issue key 
 
 == Usage Examples
 
-=== Basic Usage - Update Priority
+=== Update Single Issue
 
 [source,yaml]
 ----
-- name: Update high priority bugs
-  uses: ./jira-update-issues
-  id: update-bugs
+- name: Update issue priority
+  uses: https://github.com/cloudbees-days/jira-update-issues@v1
   with:
-    jira-url: https://mycompany.atlassian.net
-    jira-username: ${{ secrets.JIRA_USERNAME }}
+    jira-url: ${{ vars.JIRA_URL }}
+    jira-username: ${{ vars.JIRA_USERNAME }}
     jira-token: ${{ secrets.JIRA_TOKEN }}
-    jql: "project = MYPROJECT AND issuetype = Bug AND priority != High"
+    issue-key: "PROJ-123"
     update-fields: |
       priority:
         name: "High"
-
-- name: Show update results
-  uses: docker://alpine:3.22
-  shell: sh
-  run: |
-    echo "Successfully updated ${{ steps.update-bugs.outputs.update-count }} issues"
+      labels:
+        - urgent
+        - customer-facing
 ----
 
-=== Advanced Usage - Multiple Field Updates
+=== Update Multiple Issues with JQL
 
 [source,yaml]
 ----
 - name: Update release issues
-  uses: ./jira-update-issues
+  uses: https://github.com/cloudbees-days/jira-update-issues@v1
   id: update-release
   with:
-    jira-url: https://mycompany.atlassian.net
-    jira-username: ${{ secrets.JIRA_USERNAME }}
+    jira-url: ${{ vars.JIRA_URL }}
+    jira-username: ${{ vars.JIRA_USERNAME }}
     jira-token: ${{ secrets.JIRA_TOKEN }}
-    jql: "project = MYPROJECT AND fixVersion = 'v2.1.0' AND status = 'Done'"
-    notify-users: false
+    jql: "project = MYPROJECT AND fixVersion = 'v2.1.0'"
+    max-results: 10
     update-fields: |
-      summary: "[RELEASED] Original Summary"
-      labels:
-        - released
-        - v2.1.0
+      summary: "[RELEASED] {summary}"
       customfield_10001: "Released in v2.1.0"
-      assignee:
-        accountId: "557058:f58131cb-b67d-43c7-b30d-6b58d40bd077"
 
-- name: Process results
-  uses: docker://alpine:3.22
-  shell: sh
-  run: |
-    apk add --no-cache jq
-    echo "Update Summary:"
-    echo "  Success: ${{ steps.update-release.outputs.update-count }}"
-    
-    FAILED_COUNT=$(echo '${{ steps.update-release.outputs.failed-updates }}' | jq 'length')
-    echo "  Failed: $FAILED_COUNT"
-    
-    if [ "$FAILED_COUNT" -gt 0 ]; then
-      echo "Failed issues:"
-      echo '${{ steps.update-release.outputs.failed-updates }}' | jq -r '.[] | "  - \(.issue.key): \(.error)"'
-    fi
-----
-
-=== Dry Run - Preview Changes
-
-[source,yaml]
-----
-- name: Preview issue updates
-  uses: ./jira-update-issues
-  with:
-    jira-url: https://mycompany.atlassian.net
-    jira-username: ${{ secrets.JIRA_USERNAME }}
-    jira-token: ${{ secrets.JIRA_TOKEN }}
-    jql: "project = MYPROJECT AND status = 'Code Review'"
-    dry-run: true
-    update-fields: |
-      status:
-        name: "Testing"
-      assignee:
-        accountId: "557058:f58131cb-b67d-43c7-b30d-6b58d40bd077"
-----
-
-=== Complex Field Updates
-
-[source,yaml]
-----
-- name: Update with custom fields and complex data
-  uses: ./jira-update-issues
-  with:
-    jira-url: https://mycompany.atlassian.net
-    jira-username: ${{ secrets.JIRA_USERNAME }}
-    jira-token: ${{ secrets.JIRA_TOKEN }}
-    jql: "project = MYPROJECT AND sprint in openSprints()"
-    update-fields: |
-      # Update summary with prefix
-      summary: "[SPRINT] Original summary text"
-      
-      # Set priority
-      priority:
-        name: "Medium"
-      
-      # Update assignee
-      assignee:
-        accountId: "557058:f58131cb-b67d-43c7-b30d-6b58d40bd077"
-      
-      # Add labels (this replaces existing labels)
-      labels:
-        - current-sprint
-        - in-progress
-      
-      # Update custom field (text)
-      customfield_10001: "Updated via automation"
-      
-      # Update custom field (select)
-      customfield_10002:
-        value: "Option 1"
-      
-      # Update custom field (multi-select)
-      customfield_10003:
-        - value: "Choice A"
-        - value: "Choice B"
-      
-      # Update custom field (number)
-      customfield_10004: 42
-      
-      # Update custom field (date) - YYYY-MM-DD format
-      customfield_10005: "2024-12-31"
-      
-      # Update components
-      components:
-        - name: "Backend"
-        - name: "API"
+- name: Show results
+  run: echo "Updated ${{ steps.update-release.outputs.update-count }} issues"
 ----
 
 == Update Fields Format
 
 The `update-fields` input accepts YAML that maps to Jira's field structure:
 
-=== Standard Fields
-
 [source,yaml]
 ----
-# Text fields
+# Standard fields
 summary: "New summary text"
-description: "New description"
-
-# Priority
 priority:
-  name: "High"  # or "Medium", "Low", etc.
-
-# Status (be careful - this triggers workflow transitions)
-status:
-  name: "In Progress"
-
-# Assignee
+  name: "High"
 assignee:
-  accountId: "557058:f58131cb-b67d-43c7-b30d-6b58d40bd077"
-
-# Unassign issue
-assignee: null
-
-# Reporter
-reporter:
-  accountId: "557058:f58131cb-b67d-43c7-b30d-6b58d40bd077"
-
-# Labels (replaces all existing labels)
+  accountId: "user-account-id"
 labels:
   - urgent
   - customer-facing
 
-# Components
-components:
-  - name: "Backend"
-  - name: "Frontend"
-
-# Fix versions
-fixVersions:
-  - name: "v2.1.0"
-
-# Affects versions
-versions:
-  - name: "v2.0.0"
-----
-
-=== Custom Fields
-
-Custom fields use the format `customfield_XXXXX`:
-
-[source,yaml]
-----
-# Text custom field
+# Custom fields (use customfield_XXXXX format)
 customfield_10001: "Custom text value"
-
-# Number custom field
-customfield_10002: 123
-
-# Date custom field (YYYY-MM-DD)
-customfield_10003: "2024-12-31"
-
-# DateTime custom field (ISO 8601)
-customfield_10004: "2024-12-31T23:59:59.000+0000"
-
-# Select custom field
-customfield_10005:
-  value: "Option 1"
-
-# Multi-select custom field
-customfield_10006:
-  - value: "Choice A"
-  - value: "Choice B"
-
-# User picker custom field
-customfield_10007:
-  accountId: "557058:f58131cb-b67d-43c7-b30d-6b58d40bd077"
-
-# Multi-user picker custom field
-customfield_10008:
-  - accountId: "557058:f58131cb-b67d-43c7-b30d-6b58d40bd077"
-  - accountId: "557058:a1b2c3d4-e5f6-1234-5678-9abcdef01234"
-----
-
-== Finding Field Names and Values
-
-To find the correct field names and values:
-
-1. **Standard fields**: Use the field names from Jira REST API documentation
-2. **Custom fields**: Use browser developer tools on Jira forms to find `customfield_XXXXX` IDs
-3. **Field values**: Use the Jira REST API to get current issue data and see the expected format
-4. **User account IDs**: Use Jira user search API or check existing issues
-
-Example API call to get field information:
-[source,bash]
-----
-curl -u email@example.com:api_token \
-  https://your-domain.atlassian.net/rest/api/3/issue/PROJECT-123 \
-  | jq '.fields'
+customfield_10002:
+  value: "Select option"
 ----
 
 == Authentication
 
-This action uses Jira API tokens for authentication. To set up:
+Use Jira API tokens for authentication:
 
 1. Go to your Jira account settings
 2. Navigate to Security > API tokens  
 3. Create a new API token
-4. Store the token securely in your workflow secrets
+4. Store the token in your workflow secrets
 5. Use your email address as the username
-
-[WARNING]
-====
-Never hardcode credentials in your workflow files. Always use secrets or secure environment variables.
-====
-
-== Error Handling
-
-The action will:
-* Continue processing even if some issues fail to update
-* Return detailed error information for failed updates
-* Exit with status 1 if any updates fail (unless using dry-run)
-
-Common failure reasons:
-* Field validation errors (invalid values)
-* Permission denied (user can't edit the field)
-* Workflow restrictions (invalid status transitions)
-* Required fields missing
-* Field doesn't exist
-
-== Best Practices
-
-1. **Use dry-run first**: Always test with `dry-run: true` before making actual changes
-2. **Limit batch size**: Use `max-results` to control batch size for large updates
-3. **Test field formats**: Verify field formats with a single issue first
-4. **Handle failures gracefully**: Check the `failed-updates` output and handle errors appropriately
-5. **Use specific JQL**: Make JQL queries as specific as possible to avoid unintended updates
 
 == License
 
@@ -375,7 +173,5 @@ link:https://opensource.org/license/mit/[MIT license].
 
 == References
 
-* link:https://confluence.atlassian.com/jirasoftwarecloud/advanced-searching-764478330.html[Jira JQL Documentation]
 * link:https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/#api-rest-api-3-issue-issueidorkey-put[Jira Update Issue API]
-* link:https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-fields/[Jira Fields Documentation]
 * Learn more about link:https://docs.cloudbees.com/docs/cloudbees-saas-platform-actions/latest/[using actions in CloudBees workflows].
